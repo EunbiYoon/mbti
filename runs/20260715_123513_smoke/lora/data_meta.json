@@ -1,0 +1,12 @@
+{
+  "games": [
+    "tictactoe"
+  ],
+  "mbti": [
+    "INTJ",
+    "ENFP"
+  ],
+  "episodes_per_pair": 1,
+  "num_examples": 8,
+  "train_file": "/scratch/workspace/eunbiyoon_umass_edu-paper/mbti/runs/20260715_123513_smoke/lora/train.jsonl"
+}

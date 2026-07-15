@@ -1,0 +1,7 @@
+# Use the marshal conda env; listed for documentation.
+peft==0.12.0
+transformers==4.51.2
+trl==0.9.6
+open_spiel
+datasets
+torch==2.6.0
