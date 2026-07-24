@@ -1,0 +1,52 @@
+# Local env / secrets
+.env
+.env.*
+!.env.example
+
+# Run outputs (LoRA adapters, checkpoints, eval, table1) — too large for GitHub
+runs/
+**/checkpoint-*/
+**/optimizer.pt
+**/scheduler.pt
+**/rng_state.pth
+**/trainer_state.json
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.ckpt
+*.onnx
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
+.env/
+
+# Caches / notebooks / IDE
+.cache/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Hugging Face / training logs
+wandb/
+lightning_logs/
+outputs/
+logs/
+*.log
+
+# Local model weights (live under ../models usually)
+models/

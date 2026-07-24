@@ -18,20 +18,29 @@ from run_paths import new_lora_dir, write_latest_pointer, read_latest_path
 from lora.helpers import build_lora_config
 
 
-def default_model() -> str:
-    scratch = os.environ.get(
-        "SCRATCH_ROOT",
-        str(ROOT.parent),
-    )
-    for name in ("Qwen3-0.6B", "Qwen3-4B"):
-        p = Path(scratch) / "models" / name
+def default_model(*, smoke: bool = False) -> str:
+    """Smoke → Qwen3-0.6B; full → Qwen3-4B."""
+    scratch = os.environ.get("SCRATCH_ROOT", str(ROOT.parent))
+    models = Path(scratch) / "models"
+    if smoke:
+        for name in ("Qwen3-0.6B", "Qwen3-4B"):
+            p = models / name
+            if (p / "config.json").is_file():
+                return str(p)
+        return str(models / "Qwen3-0.6B")
+    for name in ("Qwen3-4B", "Qwen3-0.6B"):
+        p = models / name
         if (p / "config.json").is_file():
             return str(p)
-    return str(Path(scratch) / "models" / "Qwen3-0.6B")
+    return str(models / "Qwen3-4B")
 
 
-def format_example(ex: dict) -> str:
-    return ex["prompt"] + "\n\nANSWER:\n" + ex["completion"]
+def format_example(ex: dict):
+    # TRL may call this on a single row or a batched dict of lists.
+    prompts, comps = ex["prompt"], ex["completion"]
+    if isinstance(prompts, list):
+        return [p + "\n\nANSWER:\n" + c for p, c in zip(prompts, comps)]
+    return prompts + "\n\nANSWER:\n" + comps
 
 
 def main() -> None:
@@ -46,6 +55,7 @@ def main() -> None:
     ap.add_argument("--grad_accum", type=int, default=4)
     ap.add_argument("--max_seq_len", type=int, default=1024)
     ap.add_argument("--max_steps", type=int, default=-1)
+    ap.add_argument("--save_steps", type=int, default=None)
     ap.add_argument("--smoke", action="store_true")
     args = ap.parse_args()
 
@@ -73,11 +83,22 @@ def main() -> None:
             "Generate first: python lora/generate_data.py --smoke"
         )
 
-    base_model = args.base_model or os.environ.get("PRETRAIN") or default_model()
+    base_model = (
+        args.base_model
+        or os.environ.get("PRETRAIN")
+        or default_model(smoke=bool(args.smoke))
+    )
     if args.smoke:
         args.epochs = min(args.epochs, 1.0)
         args.max_steps = 2 if args.max_steps < 0 else args.max_steps
         args.max_seq_len = min(args.max_seq_len, 512)
+        # Prefer 0.6B for smoke even if PRETRAIN was left on 4B by mistake
+        if args.base_model is None and "4B" in Path(base_model).name and os.environ.get("PRETRAIN_SMOKE"):
+            base_model = os.environ["PRETRAIN_SMOKE"]
+    else:
+        # Full 4B runs should keep regular snapshots for evaluation/recovery.
+        args.max_steps = 200 if args.max_steps < 0 else args.max_steps
+        args.save_steps = 20 if args.save_steps is None else args.save_steps
 
     import torch
     from datasets import load_dataset
@@ -99,6 +120,13 @@ def main() -> None:
     model.print_trainable_parameters()
 
     ds = load_dataset("json", data_files=str(train_path), split="train")
+    ds = ds.map(lambda x: {"text": format_example(x)})
+    # Drop metadata columns (game, mbti, prompt, …). Otherwise the collator
+    # tries to pad them as tensors and fails (e.g. nested `game` strings).
+    keep = {"text"}
+    drop = [c for c in ds.column_names if c not in keep]
+    if drop:
+        ds = ds.remove_columns(drop)
 
     sft_args = dict(
         output_dir=str(out_dir),
@@ -107,23 +135,24 @@ def main() -> None:
         per_device_train_batch_size=args.batch_size,
         gradient_accumulation_steps=args.grad_accum,
         logging_steps=1,
-        save_strategy="epoch",
+        save_strategy="steps" if args.save_steps else "epoch",
         bf16=torch.cuda.is_available(),
-        report_to=[],
-        max_seq_length=args.max_seq_len,
-        packing=False,
+        report_to="none",
+        remove_unused_columns=True,
+        dataset_text_field="text",
     )
-    # TRL version differences: max_seq_length vs max_length
-    try:
-        config = SFTConfig(**sft_args)
-    except TypeError:
-        sft_args.pop("max_seq_length", None)
-        sft_args["max_seq_length"] = args.max_seq_len
+    if args.save_steps:
+        sft_args["save_steps"] = args.save_steps
+    # TRL version differences: max_length (newer) vs max_seq_length (older)
+    config = None
+    for key in ("max_length", "max_seq_length"):
         try:
-            config = SFTConfig(**sft_args)
+            config = SFTConfig(**{**sft_args, key: args.max_seq_len})
+            break
         except TypeError:
-            sft_args.pop("max_seq_length", None)
-            config = SFTConfig(**{k: v for k, v in sft_args.items() if k != "packing"})
+            continue
+    if config is None:
+        config = SFTConfig(**sft_args)
 
     if args.max_steps > 0:
         config.max_steps = args.max_steps
@@ -134,7 +163,6 @@ def main() -> None:
             args=config,
             train_dataset=ds,
             processing_class=tokenizer,
-            formatting_func=format_example,
         )
     except TypeError:
         trainer = SFTTrainer(
@@ -142,7 +170,6 @@ def main() -> None:
             args=config,
             train_dataset=ds,
             tokenizer=tokenizer,
-            formatting_func=format_example,
         )
     trainer.train()
     trainer.save_model(str(out_dir))
@@ -156,6 +183,8 @@ def main() -> None:
         "cuda": torch.cuda.is_available(),
         "finished_at": datetime.now(timezone.utc).isoformat(),
         "smoke": bool(args.smoke),
+        "max_steps": int(args.max_steps),
+        "save_steps": int(args.save_steps) if args.save_steps else None,
     }
     (out_dir / "run_info.json").write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
     print(f"LoRA adapter saved -> {out_dir}")

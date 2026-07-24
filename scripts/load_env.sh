@@ -3,7 +3,9 @@
 SCRATCH_ROOT="${SCRATCH_ROOT:-/scratch/workspace/eunbiyoon_umass_edu-paper}"
 export SCRATCH_ROOT
 export MODELS_ROOT="${MODELS_ROOT:-${SCRATCH_ROOT}/models}"
-export PRETRAIN="${PRETRAIN:-${MODELS_ROOT}/Qwen3-0.6B}"
+export PRETRAIN_SMOKE="${PRETRAIN_SMOKE:-${MODELS_ROOT}/Qwen3-0.6B}"
+export PRETRAIN_FULL="${PRETRAIN_FULL:-${MODELS_ROOT}/Qwen3-4B}"
+export PRETRAIN="${PRETRAIN:-${PRETRAIN_FULL}}"
 export LORA_RANK="${LORA_RANK:-16}"
 export LORA_ALPHA="${LORA_ALPHA:-32}"
 export LORA_DROPOUT="${LORA_DROPOUT:-0.05}"
